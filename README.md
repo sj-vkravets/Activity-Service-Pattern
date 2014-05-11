@@ -1,4 +1,7 @@
 Actvity-Service-Pattern
 =======================
 
-Attempt implementation of Virgil Dobjanschi's Rest pattern.
+Attempt implementation of Virgil Dobjanschi's Rest pattern A.
+
+![](pattern-A.jpg)
+
