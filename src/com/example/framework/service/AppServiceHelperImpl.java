@@ -4,6 +4,7 @@ import android.app.Application;
 import android.content.Intent;
 
 import com.example.framework.processor.BaseProcessor;
+import com.example.framework.processor.ExampleProcessor;
 
 public class AppServiceHelperImpl implements AppServiceHelper {
 
@@ -15,7 +16,13 @@ public class AppServiceHelperImpl implements AppServiceHelper {
 
 	@Override
 	public void exampleProcess() {
+		Intent intent = createExecutableServiceIntent(new ExampleProcessor(),
+				EXAMPLE_PROCESS);
+		startService(intent);
+	}
 
+	private void startService(Intent intent) {
+		mApp.startService(intent);
 	}
 
 	private Intent createCancelableServiceIntent(int processorId) {
