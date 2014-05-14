@@ -15,10 +15,11 @@ public class AppServiceHelperImpl implements AppServiceHelper {
 	}
 
 	@Override
-	public void exampleProcess() {
+	public int exampleProcess() {
 		Intent intent = createExecutableServiceIntent(new ExampleProcessor(),
 				EXAMPLE_PROCESS);
 		startService(intent);
+		return EXAMPLE_PROCESS;
 	}
 
 	private void startService(Intent intent) {

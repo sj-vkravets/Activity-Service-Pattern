@@ -42,12 +42,32 @@ public class AppService extends Service {
 	private ExecutorService mExecutor = Executors
 			.newFixedThreadPool(NUM_THREADS);
 
-	private SparseArray<AppService.ServiceThread> mServiceThreads = new SparseArray<AppService.ServiceThread>();
+	private SparseArray<AppService.ProcessThread> mProcessThreads = new SparseArray<AppService.ProcessThread>();
 
 	@Override
 	public IBinder onBind(Intent intent) {
 		LOGD(TAG, "onBind");
 		return mBinder;
+	}
+
+	@Override
+	public void onRebind(Intent intent) {
+		super.onRebind(intent);
+		LOGD(TAG, "onRebind");
+		if (mProcessThreads != null && mProcessThreads.size() > 0) {
+			int processId = 0;
+			for (int i = 0; i < mProcessThreads.size(); i++) {
+				processId = mProcessThreads.keyAt(i);
+				ProcessThread process = mProcessThreads.get(processId);
+				if (process.getThreadStatus() == ProcessThread.PROCESS_FINISHED) {
+					// The process is finished, notify the listeners
+					notifyListeners(process);
+				} else {
+					// The process is in progress, notify the listener
+				}
+			}
+		}
+
 	}
 
 	@Override
@@ -58,18 +78,23 @@ public class AppService extends Service {
 		int processorId = getProcessorId(intent.getExtras());
 
 		if (!TextUtils.isEmpty(action) && ACTION_EXECUTE_PROCESS.equals(action)) {
-			ServiceThread serviceThread = new ServiceThread(intent);
-			if (addServiceThread(processorId, serviceThread)) {
-				// TODO: Execute the process
-				mExecutor.submit(serviceThread);
+			int processStatus = getProcessStatus(processorId, intent);
+			if (processStatus == ProcessThread.PROCESS_FINISHED) {
+				// TODO: Notify the listeners.
 				LOGD(TAG,
-						"Execute the process id = "
-								+ Integer.toString(processorId));
+						"The process ["
+								+ Integer.toString(processorId)
+								+ "] is finished. The listeners have not been notified.");
+			} else if (processStatus == ProcessThread.PROCESS_IN_PROGRESS) {
+				// TODO: Notify the listeners.
+				LOGD(TAG, "The process [" + Integer.toString(processorId)
+						+ "] is in progress");
 			} else {
-				// TODO: Notify that the task is on process.
-				LOGD(TAG, "The task [" + Integer.toString(processorId)
-						+ "] is in process");
-
+				// Execute the process
+				mExecutor.submit(mProcessThreads.get(processorId));
+				LOGD(TAG,
+						"Execute the process [" + Integer.toString(processorId)
+								+ "]");
 			}
 
 		} else if (!TextUtils.isEmpty(action)
@@ -78,7 +103,7 @@ public class AppService extends Service {
 					"Cancel the process id = " + Integer.toString(processorId));
 			// TODO: Cancel the process
 
-			ServiceThread runningProcess = mServiceThreads.get(processorId);
+			ProcessThread runningProcess = mProcessThreads.get(processorId);
 			if (runningProcess != null) {
 				runningProcess.cancel();
 			}
@@ -86,22 +111,27 @@ public class AppService extends Service {
 		return START_NOT_STICKY;
 	}
 
-	private class ServiceThread implements Runnable {
+	private class ProcessThread implements Runnable {
 
+		public static final int PROCESS_IN_PROGRESS = 0;
+		public static final int PROCESS_FINISHED = 1;
+
+		private int threadStatus;
+		private int processorId;
 		private Intent intent;
 		private BaseProcessor processor;
-		private int processorId;
 
-		public ServiceThread(Intent intent) {
+		public ProcessThread(Intent intent) {
 			this.intent = intent;
 			processor = getProcessor(intent.getExtras());
-			processorId = getProcessorId(intent.getExtras());
+			processorId = AppService.this.getProcessorId(intent.getExtras());
 		}
 
 		@Override
 		public void run() {
+			threadStatus = PROCESS_IN_PROGRESS;
 			processor.executeProcess();
-			onPostExecute();
+			onPostRun();
 
 		}
 
@@ -109,39 +139,57 @@ public class AppService extends Service {
 			processor.cancelProcess();
 		}
 
-		private void onPostExecute() {
-			LOGD(TAG, "onPostExecute");
-			notifyListeners(processorId, intent.getExtras());
-			synchronized (mServiceThreads) {
-				mServiceThreads.remove(processorId);
-				if (mServiceThreads.size() == 0) {
-					LOGD(TAG, "Stop the SERVICE");
-					stopSelf();
-				}
-			}
+		private void onPostRun() {
+			threadStatus = PROCESS_FINISHED;
+			notifyListeners(this);
+		}
+
+		public Intent getIntent() {
+			return intent;
+		}
+
+		public int getThreadStatus() {
+			return threadStatus;
+		}
+
+		public int getProcessorId() {
+			return processorId;
 		}
 
 	}
 
-	private void notifyListeners(final int processorId, final Bundle args) {
+	private void notifyListeners(final ProcessThread processThread) {
 		mHandler.post(new Runnable() {
 			@Override
 			public void run() {
-				LOGD(TAG, "Notify the listeners");
-				mBinder.notifyListeners(processorId, args);
+				if (processThread.getThreadStatus() == ProcessThread.PROCESS_FINISHED) {
+					LOGD(TAG, "Notify the listeners");
+					boolean isNotified = mBinder.notifyListeners(processThread
+							.getProcessorId(), processThread.getIntent()
+							.getExtras());
+					if (isNotified) {
+						removeProcessFromList(processThread.getProcessorId());
+					}
+				}
 			}
 		});
 	}
 
-	private boolean addServiceThread(int processorId,
-			ServiceThread serviceThread) {
-		ServiceThread thread = mServiceThreads.get(processorId);
-		if (thread != null) {
-			// Task is in process.
-			return false;
+	private int getProcessStatus(int processorId, Intent intent) {
+		ProcessThread thread = mProcessThreads.get(processorId);
+		if (thread != null
+				&& thread.getThreadStatus() == ProcessThread.PROCESS_IN_PROGRESS) {
+			// Process is in process
+			return ProcessThread.PROCESS_IN_PROGRESS;
+		} else if (thread != null
+				&& thread.getThreadStatus() == ProcessThread.PROCESS_FINISHED) {
+			// Process is finished and listeners have not been notified.
+			return ProcessThread.PROCESS_FINISHED;
 		}
-		mServiceThreads.put(processorId, serviceThread);
-		return true;
+		// Add the new process
+		ProcessThread processThread = new ProcessThread(intent);
+		mProcessThreads.put(processorId, processThread);
+		return -1;
 	}
 
 	private int getProcessorId(Bundle args) {
@@ -156,6 +204,16 @@ public class AppService extends Service {
 			return args.getParcelable(EXTRA_PROCESSOR);
 		}
 		return null;
+	}
+
+	private void removeProcessFromList(int processorId) {
+		synchronized (mProcessThreads) {
+			mProcessThreads.remove(processorId);
+			if (mProcessThreads.size() == 0) {
+				LOGD(TAG, "Stop the SERVICE");
+				stopSelf();
+			}
+		}
 	}
 
 	/**
@@ -176,15 +234,9 @@ public class AppService extends Service {
 	}
 
 	@Override
-	public void onRebind(Intent intent) {
-		LOGD(TAG, "onRebind");
-		super.onRebind(intent);
-	}
-
-	@Override
 	public boolean onUnbind(Intent intent) {
 		LOGD(TAG, "onUnbind");
-		return false;
+		return true;
 	}
 
 }

@@ -25,12 +25,15 @@ public class AppBinder extends Binder {
 		}
 	}
 
-	public void notifyListeners(int taskKey, Bundle args) {
+	public boolean notifyListeners(int taskKey, Bundle args) {
 		ServiceListener listener = mServiceListeners.get(taskKey);
 		if (listener != null) {
 			listener.onTaskFinished(taskKey, args);
 			mServiceListeners.remove(taskKey);
 			LOGD(TAG, "Notify a listener with key " + Integer.toString(taskKey));
+			return true;
+		} else {
+			return false;
 		}
 	}
 
